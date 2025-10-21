@@ -1,0 +1,146 @@
+name: Commit to Notion
+
+on:
+  push:
+    branches:
+      - '**'
+  pull_request:
+    types: [opened, closed]
+
+jobs:
+  sync-to-notion:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 2
+      
+      - name: Get commit info
+        id: commit_info
+        run: |
+          # Informações do commit
+          AUTHOR="${{ github.event.head_commit.author.name || github.actor }}"
+          BRANCH="${{ github.ref_name }}"
+          DATE="${{ github.event.head_commit.timestamp || github.event.pull_request.created_at }}"
+          MESSAGE="${{ github.event.head_commit.message || github.event.pull_request.title }}"
+          LINK="${{ github.event.head_commit.url || github.event.pull_request.html_url }}"
+          
+          # Determinar tipo e status
+          if [ "${{ github.event_name }}" == "push" ]; then
+            TIPO="Push"
+            STATUS="Push Direto"
+          elif [ "${{ github.event_name }}" == "pull_request" ]; then
+            TIPO="Pull Request"
+            if [ "${{ github.event.action }}" == "closed" ] && [ "${{ github.event.pull_request.merged }}" == "true" ]; then
+              STATUS="PR Mesclado"
+            elif [ "${{ github.event.action }}" == "closed" ]; then
+              STATUS="PR Fechado"
+            else
+              STATUS="PR Aberto"
+            fi
+          fi
+          
+          # Branch de destino
+          DESTINO="${{ github.event.pull_request.base.ref || github.ref_name }}"
+          
+          # Atividade (primeira linha da mensagem)
+          ATIVIDADE=$(echo "$MESSAGE" | head -n 1)
+          
+          # Descrição (mensagem completa)
+          DESCRICAO="$MESSAGE"
+          
+          # Exportar variáveis
+          echo "author=$AUTHOR" >> $GITHUB_OUTPUT
+          echo "branch=$BRANCH" >> $GITHUB_OUTPUT
+          echo "date=$DATE" >> $GITHUB_OUTPUT
+          echo "atividade=$ATIVIDADE" >> $GITHUB_OUTPUT
+          echo "descricao=$DESCRICAO" >> $GITHUB_OUTPUT
+          echo "destino=$DESTINO" >> $GITHUB_OUTPUT
+          echo "link=$LINK" >> $GITHUB_OUTPUT
+          echo "status=$STATUS" >> $GITHUB_OUTPUT
+          echo "tipo=$TIPO" >> $GITHUB_OUTPUT
+      
+      - name: Send to Notion
+        uses: actions/github-script@v6
+        env:
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+          NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
+          AUTHOR: ${{ steps.commit_info.outputs.author }}
+          BRANCH: ${{ steps.commit_info.outputs.branch }}
+          DATE: ${{ steps.commit_info.outputs.date }}
+          ATIVIDADE: ${{ steps.commit_info.outputs.atividade }}
+          DESCRICAO: ${{ steps.commit_info.outputs.descricao }}
+          DESTINO: ${{ steps.commit_info.outputs.destino }}
+          LINK: ${{ steps.commit_info.outputs.link }}
+          STATUS: ${{ steps.commit_info.outputs.status }}
+          TIPO: ${{ steps.commit_info.outputs.tipo }}
+        with:
+          script: |
+            const https = require('https');
+            
+            const data = JSON.stringify({
+              parent: { database_id: process.env.NOTION_DATABASE_ID },
+              properties: {
+                'Atividade': {
+                  title: [{ text: { content: process.env.ATIVIDADE } }]
+                },
+                'Autor': {
+                  rich_text: [{ text: { content: process.env.AUTHOR } }]
+                },
+                'Branch': {
+                  rich_text: [{ text: { content: process.env.BRANCH } }]
+                },
+                'Data': {
+                  date: { start: process.env.DATE }
+                },
+                'Descrição': {
+                  rich_text: [{ text: { content: process.env.DESCRICAO.substring(0, 2000) } }]
+                },
+                'Destino': {
+                  rich_text: [{ text: { content: process.env.DESTINO } }]
+                },
+                'Link': {
+                  url: process.env.LINK
+                },
+                'Status': {
+                  select: { name: process.env.STATUS }
+                },
+                'Tipo': {
+                  select: { name: process.env.TIPO }
+                }
+              }
+            });
+            
+            const options = {
+              hostname: 'api.notion.com',
+              path: '/v1/pages',
+              method: 'POST',
+              headers: {
+                'Authorization': `Bearer ${process.env.NOTION_TOKEN}`,
+                'Content-Type': 'application/json',
+                'Notion-Version': '2022-06-28',
+                'Content-Length': data.length
+              }
+            };
+            
+            return new Promise((resolve, reject) => {
+              const req = https.request(options, (res) => {
+                let body = '';
+                res.on('data', (chunk) => body += chunk);
+                res.on('end', () => {
+                  if (res.statusCode === 200) {
+                    console.log('✅ Commit enviado para Notion com sucesso!');
+                    resolve(JSON.parse(body));
+                  } else {
+                    console.error('❌ Erro ao enviar para Notion:', body);
+                    reject(new Error(`Status ${res.statusCode}: ${body}`));
+                  }
+                });
+              });
+              
+              req.on('error', reject);
+              req.write(data);
+              req.end();
+            });
