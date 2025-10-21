@@ -99,39 +99,72 @@ jobs:
             console.log('  - Branch:', process.env.BRANCH);
             console.log('  - Status:', process.env.STATUS);
             console.log('  - Tipo:', process.env.TIPO);
+            console.log('  - Data:', process.env.DATE);
+            console.log('  - Link:', process.env.LINK);
             
-            const data = JSON.stringify({
-              parent: { database_id: databaseId },
-              properties: {
-                'Atividade': {
-                  title: [{ text: { content: process.env.ATIVIDADE || 'Sem título' } }]
-                },
-                'Autor': {
-                  rich_text: [{ text: { content: process.env.AUTHOR || 'Desconhecido' } }]
-                },
-                'Branch': {
-                  rich_text: [{ text: { content: process.env.BRANCH || '' } }]
-                },
-                'Data': {
-                  date: { start: process.env.DATE }
-                },
-                'Descrição': {
-                  rich_text: [{ text: { content: (process.env.DESCRICAO || '').substring(0, 2000) } }]
-                },
-                'Destino': {
-                  rich_text: [{ text: { content: process.env.DESTINO || '' } }]
-                },
-                'Link': {
-                  url: process.env.LINK
-                },
-                'Status': {
-                  status: { name: process.env.STATUS }
-                },
-                'Tipo': {
-                  select: { name: process.env.TIPO }
-                }
+            // Função para limpar texto (remover quebras de linha problemáticas)
+            const cleanText = (text) => {
+              if (!text) return '';
+              return text.replace(/[\r\n]+/g, ' ').substring(0, 2000);
+            };
+            
+            // Construir objeto de propriedades
+            const properties = {
+              'Atividade': {
+                title: [{ 
+                  text: { content: cleanText(process.env.ATIVIDADE) || 'Sem título' } 
+                }]
+              },
+              'Autor': {
+                rich_text: [{ 
+                  text: { content: cleanText(process.env.AUTHOR) || 'Desconhecido' } 
+                }]
+              },
+              'Branch': {
+                rich_text: [{ 
+                  text: { content: cleanText(process.env.BRANCH) || 'main' } 
+                }]
+              },
+              'Descrição': {
+                rich_text: [{ 
+                  text: { content: cleanText(process.env.DESCRICAO) || '' } 
+                }]
+              },
+              'Destino': {
+                rich_text: [{ 
+                  text: { content: cleanText(process.env.DESTINO) || 'main' } 
+                }]
+              },
+              'Status': {
+                status: { name: process.env.STATUS || 'Push Direto' }
+              },
+              'Tipo': {
+                select: { name: process.env.TIPO || 'Push' }
               }
-            });
+            };
+            
+            // Adicionar Data se disponível
+            if (process.env.DATE) {
+              properties['Data'] = {
+                date: { start: process.env.DATE }
+              };
+            }
+            
+            // Adicionar Link se disponível e válido
+            if (process.env.LINK && process.env.LINK.startsWith('http')) {
+              properties['Link'] = {
+                url: process.env.LINK
+              };
+            }
+            
+            const payload = {
+              parent: { database_id: databaseId },
+              properties: properties
+            };
+            
+            console.log('📦 Payload:', JSON.stringify(payload, null, 2));
+            
+            const data = JSON.stringify(payload);
             
             const options = {
               hostname: 'api.notion.com',
@@ -150,17 +183,40 @@ jobs:
                 let body = '';
                 res.on('data', (chunk) => body += chunk);
                 res.on('end', () => {
-                  if (res.statusCode === 200) {
+                  console.log(`📡 Status Code: ${res.statusCode}`);
+                  console.log(`📄 Response Body: ${body}`);
+                  
+                  if (res.statusCode === 200 || res.statusCode === 201) {
                     console.log('✅ Commit enviado para Notion com sucesso!');
-                    resolve(JSON.parse(body));
+                    try {
+                      resolve(JSON.parse(body));
+                    } catch (e) {
+                      console.log('⚠️ Resposta não é JSON, mas status foi sucesso');
+                      resolve(body);
+                    }
                   } else {
-                    console.error('❌ Erro ao enviar para Notion:', body);
-                    reject(new Error(`Status ${res.statusCode}: ${body}`));
+                    console.error('❌ Erro ao enviar para Notion');
+                    console.error('Status:', res.statusCode);
+                    console.error('Corpo da resposta:', body);
+                    
+                    let errorMsg = `Status ${res.statusCode}`;
+                    try {
+                      const errorObj = JSON.parse(body);
+                      errorMsg += `: ${errorObj.message || JSON.stringify(errorObj)}`;
+                    } catch (e) {
+                      errorMsg += `: ${body}`;
+                    }
+                    
+                    reject(new Error(errorMsg));
                   }
                 });
               });
               
-              req.on('error', reject);
+              req.on('error', (error) => {
+                console.error('❌ Erro de rede:', error);
+                reject(error);
+              });
+              
               req.write(data);
               req.end();
             });
