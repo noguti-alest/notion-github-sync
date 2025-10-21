@@ -80,91 +80,144 @@ jobs:
           script: |
             const https = require('https');
             
-            // Validar se as secrets estão configuradas
+            // Validar secrets
             if (!process.env.NOTION_TOKEN) {
-              throw new Error('❌ NOTION_TOKEN não configurado nas secrets do GitHub');
+              throw new Error('❌ NOTION_TOKEN não configurado');
             }
             if (!process.env.NOTION_DATABASE_ID) {
-              throw new Error('❌ NOTION_DATABASE_ID não configurado nas secrets do GitHub');
+              throw new Error('❌ NOTION_DATABASE_ID não configurado');
             }
             
-            // Remover hífens do database_id se houver
-            const databaseId = process.env.NOTION_DATABASE_ID.replace(/-/g, '');
+            // Limpar e validar database ID (manter ou remover hífens)
+            let databaseId = process.env.NOTION_DATABASE_ID.trim();
             
-            // Log de debug (sem expor o token completo)
-            console.log('🔍 Enviando commit para Notion...');
-            console.log('📊 Dados do commit:');
-            console.log('  - Atividade:', process.env.ATIVIDADE);
-            console.log('  - Autor:', process.env.AUTHOR);
-            console.log('  - Branch:', process.env.BRANCH);
-            console.log('  - Status:', process.env.STATUS);
-            console.log('  - Tipo:', process.env.TIPO);
-            console.log('  - Data:', process.env.DATE);
-            console.log('  - Link:', process.env.LINK);
+            console.log('🔍 Iniciando envio para Notion...');
+            console.log('Database ID (original):', databaseId);
+            console.log('Database ID (length):', databaseId.length);
             
-            // Função para limpar texto (remover quebras de linha problemáticas)
-            const cleanText = (text) => {
+            // Função para sanitizar texto
+            const sanitize = (text) => {
               if (!text) return '';
-              return text.replace(/[\r\n]+/g, ' ').substring(0, 2000);
+              // Remove caracteres de controle e limita tamanho
+              return String(text)
+                .replace(/[\x00-\x1F\x7F-\x9F]/g, '')
+                .replace(/\r\n/g, ' ')
+                .replace(/\n/g, ' ')
+                .replace(/\r/g, ' ')
+                .trim()
+                .substring(0, 2000);
             };
             
-            // Construir objeto de propriedades
-            const properties = {
-              'Atividade': {
-                title: [{ 
-                  text: { content: cleanText(process.env.ATIVIDADE) || 'Sem título' } 
-                }]
+            // Preparar dados
+            const atividade = sanitize(process.env.ATIVIDADE) || 'Commit';
+            const autor = sanitize(process.env.AUTHOR) || 'Unknown';
+            const branch = sanitize(process.env.BRANCH) || 'main';
+            const descricao = sanitize(process.env.DESCRICAO) || '';
+            const destino = sanitize(process.env.DESTINO) || 'main';
+            const status = process.env.STATUS || 'Push Direto';
+            const tipo = process.env.TIPO || 'Push';
+            
+            console.log('📊 Dados processados:');
+            console.log('  Atividade:', atividade);
+            console.log('  Autor:', autor);
+            console.log('  Branch:', branch);
+            console.log('  Status:', status);
+            console.log('  Tipo:', tipo);
+            
+            // Construir payload
+            const payload = {
+              parent: {
+                database_id: databaseId
               },
-              'Autor': {
-                rich_text: [{ 
-                  text: { content: cleanText(process.env.AUTHOR) || 'Desconhecido' } 
-                }]
-              },
-              'Branch': {
-                rich_text: [{ 
-                  text: { content: cleanText(process.env.BRANCH) || 'main' } 
-                }]
-              },
-              'Descrição': {
-                rich_text: [{ 
-                  text: { content: cleanText(process.env.DESCRICAO) || '' } 
-                }]
-              },
-              'Destino': {
-                rich_text: [{ 
-                  text: { content: cleanText(process.env.DESTINO) || 'main' } 
-                }]
-              },
-              'Status': {
-                status: { name: process.env.STATUS || 'Push Direto' }
-              },
-              'Tipo': {
-                select: { name: process.env.TIPO || 'Push' }
+              properties: {
+                'Atividade': {
+                  title: [
+                    {
+                      text: {
+                        content: atividade
+                      }
+                    }
+                  ]
+                },
+                'Autor': {
+                  rich_text: [
+                    {
+                      text: {
+                        content: autor
+                      }
+                    }
+                  ]
+                },
+                'Branch': {
+                  rich_text: [
+                    {
+                      text: {
+                        content: branch
+                      }
+                    }
+                  ]
+                },
+                'Descrição': {
+                  rich_text: [
+                    {
+                      text: {
+                        content: descricao
+                      }
+                    }
+                  ]
+                },
+                'Destino': {
+                  rich_text: [
+                    {
+                      text: {
+                        content: destino
+                      }
+                    }
+                  ]
+                },
+                'Status': {
+                  status: {
+                    name: status
+                  }
+                },
+                'Tipo': {
+                  select: {
+                    name: tipo
+                  }
+                }
               }
             };
             
-            // Adicionar Data se disponível
-            if (process.env.DATE) {
-              properties['Data'] = {
-                date: { start: process.env.DATE }
+            // Adicionar Data se válida
+            if (process.env.DATE && process.env.DATE.match(/^\d{4}-\d{2}-\d{2}/)) {
+              payload.properties['Data'] = {
+                date: {
+                  start: process.env.DATE
+                }
               };
+              console.log('  Data:', process.env.DATE);
             }
             
-            // Adicionar Link se disponível e válido
+            // Adicionar Link se válido
             if (process.env.LINK && process.env.LINK.startsWith('http')) {
-              properties['Link'] = {
+              payload.properties['Link'] = {
                 url: process.env.LINK
               };
+              console.log('  Link:', process.env.LINK);
             }
             
-            const payload = {
-              parent: { database_id: databaseId },
-              properties: properties
-            };
-            
-            console.log('📦 Payload:', JSON.stringify(payload, null, 2));
-            
-            const data = JSON.stringify(payload);
+            // Converter para JSON
+            let data;
+            try {
+              data = JSON.stringify(payload);
+              console.log('📦 Payload JSON gerado com sucesso');
+              console.log('📏 Tamanho:', data.length, 'bytes');
+              // Mostrar primeiros 500 caracteres do payload para debug
+              console.log('🔍 Preview do payload:', data.substring(0, 500));
+            } catch (e) {
+              console.error('❌ Erro ao gerar JSON:', e.message);
+              throw e;
+            }
             
             const options = {
               hostname: 'api.notion.com',
