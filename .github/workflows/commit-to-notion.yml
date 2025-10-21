@@ -80,32 +80,52 @@ jobs:
           script: |
             const https = require('https');
             
+            // Validar se as secrets estão configuradas
+            if (!process.env.NOTION_TOKEN) {
+              throw new Error('❌ NOTION_TOKEN não configurado nas secrets do GitHub');
+            }
+            if (!process.env.NOTION_DATABASE_ID) {
+              throw new Error('❌ NOTION_DATABASE_ID não configurado nas secrets do GitHub');
+            }
+            
+            // Remover hífens do database_id se houver
+            const databaseId = process.env.NOTION_DATABASE_ID.replace(/-/g, '');
+            
+            // Log de debug (sem expor o token completo)
+            console.log('🔍 Enviando commit para Notion...');
+            console.log('📊 Dados do commit:');
+            console.log('  - Atividade:', process.env.ATIVIDADE);
+            console.log('  - Autor:', process.env.AUTHOR);
+            console.log('  - Branch:', process.env.BRANCH);
+            console.log('  - Status:', process.env.STATUS);
+            console.log('  - Tipo:', process.env.TIPO);
+            
             const data = JSON.stringify({
-              parent: { database_id: process.env.NOTION_DATABASE_ID },
+              parent: { database_id: databaseId },
               properties: {
                 'Atividade': {
-                  title: [{ text: { content: process.env.ATIVIDADE } }]
+                  title: [{ text: { content: process.env.ATIVIDADE || 'Sem título' } }]
                 },
                 'Autor': {
-                  rich_text: [{ text: { content: process.env.AUTHOR } }]
+                  rich_text: [{ text: { content: process.env.AUTHOR || 'Desconhecido' } }]
                 },
                 'Branch': {
-                  rich_text: [{ text: { content: process.env.BRANCH } }]
+                  rich_text: [{ text: { content: process.env.BRANCH || '' } }]
                 },
                 'Data': {
                   date: { start: process.env.DATE }
                 },
                 'Descrição': {
-                  rich_text: [{ text: { content: process.env.DESCRICAO.substring(0, 2000) } }]
+                  rich_text: [{ text: { content: (process.env.DESCRICAO || '').substring(0, 2000) } }]
                 },
                 'Destino': {
-                  rich_text: [{ text: { content: process.env.DESTINO } }]
+                  rich_text: [{ text: { content: process.env.DESTINO || '' } }]
                 },
                 'Link': {
                   url: process.env.LINK
                 },
                 'Status': {
-                  select: { name: process.env.STATUS }
+                  status: { name: process.env.STATUS }
                 },
                 'Tipo': {
                   select: { name: process.env.TIPO }
